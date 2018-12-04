@@ -1,124 +1,99 @@
 import os
 import secrets
-from PIL import Image
-from flask import render_template, url_for, flash, redirect, request, abort
-from flaskblog import app, db, bcrypt
-from flaskblog.forms import RegistrationForm, LoginForm, UpdateAccountForm, PostForm
-from flaskblog.models import User, Post
-from flask_login import login_user, current_user, logout_user, login_required
+from flask import render_template,url_for,flash,redirect,abort,request
+from sqlalchemy.sql.functions import current_user
+from reservation import app, db
+from reservation.models import Reservation
+from reservation.form import reservationForm
+from datetime import datetime
 
 
-@app.route("/")
-@app.route("/home")
-def home():
-        posts = Post.query.all()
-        return render_template('home.html', posts=posts)
+@app.route('/history')
+def history():
+    reservations = Reservation.query.all()
+    return render_template('history.html', reservations=reservations)
 
-@app.route("/menu")
-def about():
-    return render_template('about.html', title='About')
+@app.route('/')
+def index():
+	reservations = Reservation.query.all()
+	return render_template('index.html', reservations=reservations)
 
 
-@app.route("/register", methods=['GET', 'POST'])
-def register():
-    if current_user.is_authenticated:
-        return redirect(url_for('home'))
-    form = RegistrationForm()
+
+@app.route('/reservation/new', methods=['GET', 'POST'])
+def new_reservation():
+    form = reservationForm()
     if form.validate_on_submit():
-        hashed_password = bcrypt.generate_password_hash(form.password.data).decode('utf-8')
-        user = User(username=form.username.data, email=form.email.data, password=hashed_password)
-        db.session.add(user)
-        db.session.commit()
-        flash('Your account has been created! You are now able to log in', 'success')
-        return redirect(url_for('login'))
-    return render_template('register.html', title='Register', form=form)
+        if form.date.data < datetime.now().date():
+            flash("You cannot book dates in the past")
+            return redirect('new_reservation')
+        reservation = Reservation(package=form.package.data, date=form.date.data, location=form.location.data, occasion=form.occasion.data, addons=form.addons.data)
+        if form.date.data == form.date.data:
+            flash("That date is taken!")
+            return redirect(url_for('new_reservation'))
+        if reservation:
+            db.session.add(reservation)
+            db.session.commit()
+            flash("Reservation created!")
+            return redirect(url_for('index'))
+    return render_template('reservation.html', title="Make Reservation", form=form)
 
 
-@app.route("/login", methods=['GET', 'POST'])
-def login():
-    if current_user.is_authenticated:
-        return redirect(url_for('home'))
-    form = LoginForm()
+
+
+#@app.route("/reservation/new", methods=['GET','POST'])
+#def new_reservation():
+
+#  form = reservationForm()
+#  if form.validate_on_submit():
+ #    reservation = Reservation(package=form.package.data, date=form.date.data, location=form.location.data, occasion=form.occasion.data, addons=form.addons.data)
+ #    db.session.add(reservation)
+ #    db.session.commit()
+ #    flash('Your post has been created!', 'success')
+ #    return redirect(url_for('index'))
+#  return render_template('reservation.html',  form=form)
+
+
+@app.route("/reservation/<int:id>")
+def reservation(id):
+    reservation = Reservation.query.filter_by(id=id).first_or_404()
+    return render_template('view.html',  reservation=reservation)
+
+
+@app.route("/reservation/update/<int:id>", methods=['GET', 'POST'])
+def update_reservation(id):
+    reservation = Reservation.query.filter_by(id=id).first_or_404()
+    form = reservationForm(obj=reservation)
     if form.validate_on_submit():
-        user = User.query.filter_by(email=form.email.data).first()
-        if user and bcrypt.check_password_hash(user.password, form.password.data):
-            login_user(user, remember=form.remember.data)
-            next_page = request.args.get('next')
-            return redirect(next_page) if next_page else redirect(url_for('home'))
+        if form.date.data < datetime.now().date():
+            flash("You cannot book dates in the past")
+            return redirect(url_for('update_reservation',id=id))
+        reservation = Reservation(package=form.package.data, date=form.date.data, location=form.location.data, occasion=form.occasion.data, addons=form.addons.data)
+        if form.date.data == form.id.data:
+            flash("That date is taken!")
+            return redirect(url_for('update_reservation',id=id))
         else:
-            flash('Login Unsuccessful. Please check email and password', 'danger')
-    return render_template('login.html', title='Login', form=form)
-
-
-@app.route("/logout")
-def logout():
-    logout_user()
-    return redirect(url_for('home'))
-
-
-@app.route("/account", methods=['GET', 'POST'])
-@login_required
-def account():
-    form = UpdateAccountForm()
-    if form.validate_on_submit():
-        current_user.username = form.username.data
-        current_user.email = form.email.data
+          reservation.package = form.package.data
+          reservation.date = form.date.data
+          reservation.location = form.location.data
+          reservation.occasion = form.occasion.data
+          reservation.addons = form.addons.data
         db.session.commit()
-        flash('Your account has been updated!', 'success')
-        return redirect(url_for('account'))
+        flash("reservation is updated")
+        return redirect(url_for('index',id=id))
     elif request.method == 'GET':
-        form.username.data = current_user.username
-        form.email.data = current_user.email
-    return render_template('account.html', title='Account', form=form)
+        form.package.data = reservation.package
+        form.date.data = reservation.date
+        form.location.data=reservation.location
+        form.occasion.data=reservation.occasion
+        form.addons.data=reservation.addons
+    return render_template('update.html', form=form)
 
 
-@app.route("/post/new", methods=['GET', 'POST'])
-@login_required
-def new_post():
-    form = PostForm()
-    if form.validate_on_submit():
-        post = Post(title=form.title.data, content=form.content.data, author=current_user)
-        db.session.add(post)
-        db.session.commit()
-        flash('Your post has been created!', 'success')
-        return redirect(url_for('home'))
-    return render_template('create_post.html', title='New Post',
-                           form=form, legend='New Post')
-
-
-@app.route("/post/<int:post_id>")
-def post(post_id):
-    post = Post.query.get_or_404(post_id)
-    return render_template('post.html', title=post.title, post=post)
-
-
-@app.route("/post/<int:post_id>/update", methods=['GET', 'POST'])
-@login_required
-def update_post(post_id):
-    post = Post.query.get_or_404(post_id)
-    if post.author != current_user:
-        abort(403)
-    form = PostForm()
-    if form.validate_on_submit():
-        post.title = form.title.data
-        post.content = form.content.data
-        db.session.commit()
-        flash('Your post has been updated!', 'success')
-        return redirect(url_for('post', post_id=post.id))
-    elif request.method == 'GET':
-        form.title.data = post.title
-        form.content.data = post.content
-    return render_template('create_post.html', title='Update Post',
-                           form=form, legend='Update Post')
-
-
-@app.route("/post/<int:post_id>/delete", methods=['POST'])
-@login_required
-def delete_post(post_id):
-    post = Post.query.get_or_404(post_id)
-    if post.author != current_user:
-        abort(403)
-    db.session.delete(post)
+@app.route("/post/delete/<int:id>", methods=['POST'])
+def delete_reservation(id):
+    reservation = Reservation.query.filter_by(id=id).first_or_404()
+    db.session.delete(reservation)
     db.session.commit()
     flash('Your post has been deleted!', 'success')
-    return redirect(url_for('home'))
+    return redirect(url_for('index'))
